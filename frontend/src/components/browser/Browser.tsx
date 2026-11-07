@@ -7,9 +7,10 @@ import {
   getPeople,
   getSiteByAddress,
   createVisit,
+  getVisits,
 } from '@/lib/api';
 
-import type { Person, Site } from '@/types';
+import type { Person, Site, Visit } from '@/types';
 
 type NavigationMethod =
   | 'typed'
@@ -33,6 +34,11 @@ export default function Browser() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const [visits, setVisits] = useState<Visit[]>([]);
+const [historyLoading, setHistoryLoading] = useState(false);
+const [historyError, setHistoryError] = useState('');
+const [historyRefresh, setHistoryRefresh] = useState(0);
 
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [currentIndex, setCurrentIndex] = useState(-1);
@@ -70,7 +76,46 @@ export default function Browser() {
 
     loadPeople();
   }, []);
+// Load browsing history for the selected person.
+useEffect(() => {
+  if (!selectedPerson) {
+    setVisits([]);
+    return;
+  }
 
+  let cancelled = false;
+
+  async function loadHistory() {
+    setHistoryLoading(true);
+    setHistoryError('');
+
+    try {
+      const data = await getVisits(selectedPerson);
+
+      if (!cancelled) {
+        setVisits(data);
+      }
+    } catch (err) {
+      if (!cancelled) {
+        setHistoryError(
+          err instanceof Error
+            ? err.message
+            : 'Could not load browsing history.',
+        );
+      }
+    } finally {
+      if (!cancelled) {
+        setHistoryLoading(false);
+      }
+    }
+  }
+
+  loadHistory();
+
+  return () => {
+    cancelled = true;
+  };
+}, [selectedPerson, historyRefresh]);
   // Save the current page's scroll position in its stack entry.
 
   // Save the current page's scroll position in its stack entry.
@@ -177,15 +222,18 @@ export default function Browser() {
     setSite(loadedSite);
 
     // Record the visit whether the website exists or not.
-    try {
-      await createVisit({
-        personId: selectedPerson,
-        address: normalizedAddress,
-        method,
-      });
-    } catch (err) {
-      console.error('Could not record browsing visit:', err);
-    }
+   try {
+  await createVisit({
+    personId: selectedPerson,
+    address: normalizedAddress,
+    method,
+  });
+
+  // Reload the selected person's browsing history.
+  setHistoryRefresh((current) => current + 1);
+} catch (err) {
+  console.error('Could not record browsing visit:', err);
+}
 
     if (requestId === navigationIdRef.current) {
       setLoading(false);
@@ -407,87 +455,177 @@ export default function Browser() {
       </header>
 
       {/* Website viewer */}
-   <section className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-hidden px-4 py-4">
-   <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+{/* History panel and website viewer */}
+<section className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-hidden px-4 py-4">
+  <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
 
-       <div className="shrink-0 border-b border-slate-200 px-5 py-3">
-            {site ? (
-              <div>
-                <h2 className="font-semibold text-slate-800">
-                  {site.title}
-                </h2>
-                <p className="text-xs text-slate-500">
-                  {site.address}
+    {/* Browsing history */}
+    <aside className="flex w-full shrink-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:w-80">
+
+      <div className="shrink-0 border-b border-slate-200 px-4 py-3">
+        <h2 className="font-semibold text-slate-800">
+          Browsing History
+        </h2>
+
+        <p className="mt-1 text-xs text-slate-500">
+          {visits.length} recorded visits
+        </p>
+      </div>
+
+      <div className="min-h-0 max-h-64 flex-1 overflow-y-auto lg:max-h-none">
+
+        {historyLoading && (
+          <p className="p-4 text-sm text-slate-500">
+            Loading history...
+          </p>
+        )}
+
+        {!historyLoading && historyError && (
+          <p className="p-4 text-sm text-red-600">
+            {historyError}
+          </p>
+        )}
+
+        {!historyLoading && !historyError && visits.length === 0 && (
+          <p className="p-4 text-sm text-slate-500">
+            No browsing history yet. Visit a website to get started.
+          </p>
+        )}
+
+        {!historyLoading && !historyError && visits.length > 0 && (
+          <div className="divide-y divide-slate-100">
+            {visits.map((visit) => (
+              <button
+                key={visit._id}
+                type="button"
+                onClick={() => navigate(visit.address, 'history')}
+                disabled={loading}
+                className="w-full px-4 py-3 text-left transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="break-all text-sm font-medium text-slate-800">
+                    {visit.title || visit.address}
+                  </span>
+
+                  <span
+                    className={`shrink-0 rounded px-2 py-0.5 text-xs ${
+                      visit.status === 'found'
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-red-100 text-red-700'
+                    }`}
+                  >
+                    {visit.status === 'found' ? 'Found' : 'Not found'}
+                  </span>
+                </div>
+
+                <p className="mt-1 break-all text-xs text-slate-500">
+                  {visit.address}
                 </p>
-              </div>
-            ) : (
-              <p className="text-sm text-slate-500">
-                {loading
-                  ? 'Loading website...'
-                  : 'Enter a .zz address to start browsing.'}
-              </p>
-            )}
+
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-1 text-xs text-slate-400">
+                  <span>
+                    {new Date(visit.visitedAt).toLocaleString()}
+                  </span>
+
+                  <span className="capitalize">
+                    {visit.method}
+                  </span>
+                </div>
+              </button>
+            ))}
           </div>
+        )}
+      </div>
+    </aside>
 
-       <div className="min-h-0 flex-1 overflow-hidden bg-white">
+    {/* Website viewer */}
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
 
-            {loading && (
-              <div className="flex min-h-[600px] items-center justify-center">
-                <p className="text-sm text-slate-500">
-                  Loading website...
-                </p>
-              </div>
-            )}
+      <div className="shrink-0 border-b border-slate-200 px-5 py-3">
+        {site ? (
+          <div>
+            <h2 className="font-semibold text-slate-800">
+              {site.title}
+            </h2>
 
-            {!loading && site && (
-              <iframe
-                ref={iframeRef}
-                key={site._id}
-                title={site.title}
-                srcDoc={site.html}
-                sandbox="allow-same-origin"
-                referrerPolicy="no-referrer"
-                onLoad={handleFrameLoad}
-             className="block h-full w-full border-0"
-              />
-            )}
-
-            {!loading && error && (
-              <div className="flex min-h-[600px] flex-col items-center justify-center px-6 text-center">
-                <h2 className="text-2xl font-semibold text-slate-800">
-                  Website not found
-                </h2>
-                <p className="mt-3 max-w-md text-sm text-slate-500">
-                  {error}
-                </p>
-                <p className="mt-4 text-sm text-slate-400">
-                  Check the address or try another .zz website.
-                </p>
-              </div>
-            )}
-
-            {!loading && !site && !error && (
-              <div className="flex min-h-[600px] flex-col items-center justify-center px-6 text-center">
-                <h2 className="text-3xl font-bold tracking-tight text-slate-800">
-                  Welcome to TinyWeb
-                </h2>
-                <p className="mt-3 max-w-md text-sm leading-6 text-slate-500">
-                  Explore a miniature web of interconnected websites.
-                  Enter an address above to begin.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => navigate('tidepool.zz')}
-                  className="mt-6 rounded-lg bg-blue-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-800"
-                >
-                  Explore Tidepool
-                </button>
-              </div>
-            )}
-
+            <p className="text-xs text-slate-500">
+              {site.address}
+            </p>
           </div>
-        </div>
-      </section>
+        ) : (
+          <p className="text-sm text-slate-500">
+            {loading
+              ? 'Loading website...'
+              : 'Enter a .zz address to start browsing.'}
+          </p>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-hidden bg-white">
+
+        {loading && (
+          <div className="flex h-full min-h-[400px] items-center justify-center">
+            <p className="text-sm text-slate-500">
+              Loading website...
+            </p>
+          </div>
+        )}
+
+        {!loading && site && (
+          <iframe
+            ref={iframeRef}
+            key={site._id}
+            title={site.title}
+            srcDoc={site.html}
+            sandbox="allow-same-origin"
+            referrerPolicy="no-referrer"
+            onLoad={handleFrameLoad}
+            className="block h-full w-full border-0"
+          />
+        )}
+
+        {!loading && error && (
+          <div className="flex min-h-[600px] flex-col items-center justify-center px-6 text-center">
+            <h2 className="text-2xl font-semibold text-slate-800">
+              Website not found
+            </h2>
+
+            <p className="mt-3 max-w-md text-sm text-slate-500">
+              {error}
+            </p>
+
+            <p className="mt-4 text-sm text-slate-400">
+              Check the address or try another .zz website.
+            </p>
+          </div>
+        )}
+
+        {!loading && !site && !error && (
+          <div className="flex min-h-[600px] flex-col items-center justify-center px-6 text-center">
+            <h2 className="text-3xl font-bold tracking-tight text-slate-800">
+              Welcome to TinyWeb
+            </h2>
+
+            <p className="mt-3 max-w-md text-sm leading-6 text-slate-500">
+              Explore a miniature web of interconnected websites.
+              Enter an address above to begin.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => navigate('tidepool.zz')}
+              className="mt-6 rounded-lg bg-blue-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-800"
+            >
+              Explore Tidepool
+            </button>
+          </div>
+        )}
+
+      </div>
+    </div>
+
+  </div>
+</section>
     </main>
   );
 }
