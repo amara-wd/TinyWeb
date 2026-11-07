@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   getPeople,
@@ -21,6 +21,7 @@ type NavigationMethod =
 
 interface HistoryEntry {
   address: string;
+  scrollY: number;
 }
 
 export default function Browser() {
@@ -36,11 +37,23 @@ export default function Browser() {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [currentIndex, setCurrentIndex] = useState(-1);
 
+  // Refs keep the latest navigation state available to event handlers.
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const entriesRef = useRef<HistoryEntry[]>([]);
+  const currentIndexRef = useRef(-1);
+
+  // The scroll position to restore after the next page loads.
+  const pendingScrollRef = useRef(0);
+
+  // Prevent an older, slower request from replacing a newer page.
+  const navigationIdRef = useRef(0);
+
   // Load available people.
   useEffect(() => {
     async function loadPeople() {
       try {
         const data = await getPeople();
+
         setPeople(data);
 
         if (data.length > 0) {
@@ -58,95 +71,173 @@ export default function Browser() {
     loadPeople();
   }, []);
 
+  // Save the current page's scroll position in its stack entry.
+
+  // Save the current page's scroll position in its stack entry.
+  function saveCurrentScroll() {
+    const index = currentIndexRef.current;
+
+    if (index < 0 || !entriesRef.current[index]) {
+      return;
+    }
+
+    const iframe = iframeRef.current;
+    const document = iframe?.contentDocument;
+
+    if (!iframe || !document) return;
+
+    // Read the scroll position from the iframe's document.
+    const scrollY = Math.max(
+      iframe.contentWindow?.scrollY ?? 0,
+      document.documentElement?.scrollTop ?? 0,
+      document.body?.scrollTop ?? 0,
+    );
+
+    const updatedEntries = [...entriesRef.current];
+
+    updatedEntries[index] = {
+      ...updatedEntries[index],
+      scrollY,
+    };
+
+    entriesRef.current = updatedEntries;
+    setEntries(updatedEntries);
+
+    console.log(
+      'Saved scroll position:',
+      entriesRef.current[index].address,
+      scrollY,
+    );
+  }
+
+
+  
   // Navigate to a website.
   async function navigate(
     targetAddress: string,
     method: NavigationMethod = 'typed',
     addToStack = true,
+    restoreScroll = 0,
   ) {
     const normalizedAddress = targetAddress.trim().toLowerCase();
 
     if (!normalizedAddress || !selectedPerson) return;
+
+    if (addToStack) {
+      // Save the page we are leaving before creating a new entry.
+      saveCurrentScroll();
+
+      // Discard the forward branch when navigating from an older entry.
+      const newEntries = [
+        ...entriesRef.current.slice(0, currentIndexRef.current + 1),
+        {
+          address: normalizedAddress,
+          scrollY: 0,
+        },
+      ];
+
+      entriesRef.current = newEntries;
+      setEntries(newEntries);
+
+      const newIndex = newEntries.length - 1;
+
+      currentIndexRef.current = newIndex;
+      setCurrentIndex(newIndex);
+
+      // New websites always start at the top.
+      pendingScrollRef.current = 0;
+    } else {
+      // Back and Forward restore the destination's saved position.
+      pendingScrollRef.current = restoreScroll;
+    }
+
+    const requestId = ++navigationIdRef.current;
 
     setAddress(normalizedAddress);
     setLoading(true);
     setError('');
     setSite(null);
 
-    if (addToStack) {
-      const newEntries = [
-        ...entries.slice(0, currentIndex + 1),
-        { address: normalizedAddress },
-      ];
-
-      setEntries(newEntries);
-      setCurrentIndex(newEntries.length - 1);
-    }
+    let loadedSite: Site | null = null;
 
     try {
-      const result = await getSiteByAddress(normalizedAddress);
-
-      setSite(result);
-
-      await createVisit({
-        personId: selectedPerson,
-        address: normalizedAddress,
-        method,
-      });
+      loadedSite = await getSiteByAddress(normalizedAddress);
     } catch (err) {
-      setSite(null);
+      if (requestId !== navigationIdRef.current) return;
 
       setError(
         err instanceof Error
           ? err.message
           : 'This website could not be found.',
       );
+    }
 
-      try {
-        await createVisit({
-          personId: selectedPerson,
-          address: normalizedAddress,
-          method,
-        });
-      } catch {
-        console.error('Could not record browsing visit.');
-      }
-    } finally {
+    if (requestId !== navigationIdRef.current) return;
+
+    setSite(loadedSite);
+
+    // Record the visit whether the website exists or not.
+    try {
+      await createVisit({
+        personId: selectedPerson,
+        address: normalizedAddress,
+        method,
+      });
+    } catch (err) {
+      console.error('Could not record browsing visit:', err);
+    }
+
+    if (requestId === navigationIdRef.current) {
       setLoading(false);
     }
   }
 
-  // Browser back button.
+  // Browser Back.
   function goBack() {
-    if (currentIndex <= 0) return;
+    if (currentIndexRef.current <= 0 || loading) return;
 
-    const nextIndex = currentIndex - 1;
+    // Save the current page before moving to the previous entry.
+    saveCurrentScroll();
+
+    const nextIndex = currentIndexRef.current - 1;
+    const entry = entriesRef.current[nextIndex];
+
+    currentIndexRef.current = nextIndex;
     setCurrentIndex(nextIndex);
 
-    navigate(
-      entries[nextIndex].address,
-      'back',
-      false,
-    );
+    navigate(entry.address, 'back', false, entry.scrollY);
   }
 
-  // Browser forward button.
+  // Browser Forward.
   function goForward() {
-    if (currentIndex >= entries.length - 1) return;
+    if (
+      currentIndexRef.current >= entriesRef.current.length - 1 ||
+      loading
+    ) {
+      return;
+    }
 
-    const nextIndex = currentIndex + 1;
+    // Save the current page before moving to the next entry.
+    saveCurrentScroll();
+
+    const nextIndex = currentIndexRef.current + 1;
+    const entry = entriesRef.current[nextIndex];
+
+    currentIndexRef.current = nextIndex;
     setCurrentIndex(nextIndex);
 
-    navigate(
-      entries[nextIndex].address,
-      'forward',
-      false,
-    );
+    navigate(entry.address, 'forward', false, entry.scrollY);
   }
+
 
   // Change browsing identity.
   function changePerson(personId: string) {
+    navigationIdRef.current++;
+
     setSelectedPerson(personId);
+
+    entriesRef.current = [];
+    currentIndexRef.current = -1;
 
     setEntries([]);
     setCurrentIndex(-1);
@@ -154,7 +245,79 @@ export default function Browser() {
     setSite(null);
     setAddress('');
     setError('');
+    setLoading(false);
   }
+
+  // Intercept internal links inside the sandboxed website.
+ 
+  // Intercept internal links and restore scroll position.
+  function handleFrameLoad() {
+    const iframe = iframeRef.current;
+    const document = iframe?.contentDocument;
+
+    if (!iframe || !document) return;
+
+    const scrollY = pendingScrollRef.current;
+
+    console.log('Restoring scroll position:', address, scrollY);
+
+    // Wait for the iframe document to render before restoring.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const frameWindow = iframe.contentWindow;
+        const scrollingElement = document.scrollingElement;
+
+        frameWindow?.scrollTo({
+          top: scrollY,
+          left: 0,
+          behavior: 'instant',
+        });
+
+        if (scrollingElement) {
+          scrollingElement.scrollTop = scrollY;
+        }
+
+        document.documentElement.scrollTop = scrollY;
+        document.body.scrollTop = scrollY;
+      });
+    });
+
+    // Intercept links inside the website.
+    document.addEventListener('click', (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      const link = target?.closest('a');
+
+      if (!link) return;
+
+      event.preventDefault();
+
+      const href = link.getAttribute('href');
+
+      if (!href) return;
+
+      try {
+        const url = new URL(href, `http://${address}`);
+
+        const targetAddress = url.hostname.toLowerCase();
+
+        if (
+          url.protocol !== 'http:' &&
+          url.protocol !== 'https:'
+        ) {
+          return;
+        }
+
+        if (!/^[a-z0-9-]+\.zz$/.test(targetAddress)) {
+          return;
+        }
+
+        navigate(targetAddress, 'link');
+      } catch {
+        console.error('Invalid website link:', href);
+      }
+    });
+  }
+
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -162,14 +325,12 @@ export default function Browser() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 text-slate-900">
+ <main className="flex h-screen flex-col overflow-hidden bg-slate-100 text-slate-900">
 
       {/* Browser toolbar */}
-      <header className="border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
-
+    <header className="shrink-0 border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3">
 
-          {/* Browser name */}
           <div className="mr-3">
             <h1 className="text-xl font-bold tracking-tight text-slate-800">
               TinyWeb
@@ -179,9 +340,8 @@ export default function Browser() {
             </p>
           </div>
 
-          {/* Back and forward */}
+          {/* Navigation controls */}
           <div className="flex items-center gap-1">
-
             <button
               type="button"
               onClick={goBack}
@@ -205,7 +365,6 @@ export default function Browser() {
             >
               →
             </button>
-
           </div>
 
           {/* Address bar */}
@@ -230,7 +389,7 @@ export default function Browser() {
             </button>
           </form>
 
-          {/* Person selector */}
+          {/* Browsing person */}
           <select
             value={selectedPerson}
             onChange={(event) => changePerson(event.target.value)}
@@ -247,20 +406,16 @@ export default function Browser() {
         </div>
       </header>
 
-      {/* Main browser area */}
-      <section className="mx-auto max-w-7xl px-4 py-6">
+      {/* Website viewer */}
+   <section className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-hidden px-4 py-4">
+   <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
 
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-
-          {/* Page information */}
-          <div className="border-b border-slate-200 px-5 py-3">
-
+       <div className="shrink-0 border-b border-slate-200 px-5 py-3">
             {site ? (
               <div>
                 <h2 className="font-semibold text-slate-800">
                   {site.title}
                 </h2>
-
                 <p className="text-xs text-slate-500">
                   {site.address}
                 </p>
@@ -272,11 +427,9 @@ export default function Browser() {
                   : 'Enter a .zz address to start browsing.'}
               </p>
             )}
-
           </div>
 
-          {/* Website viewer */}
-          <div className="min-h-[600px] bg-white">
+       <div className="min-h-0 flex-1 overflow-hidden bg-white">
 
             {loading && (
               <div className="flex min-h-[600px] items-center justify-center">
@@ -288,45 +441,40 @@ export default function Browser() {
 
             {!loading && site && (
               <iframe
+                ref={iframeRef}
                 key={site._id}
                 title={site.title}
                 srcDoc={site.html}
-                sandbox=""
+                sandbox="allow-same-origin"
                 referrerPolicy="no-referrer"
-                className="min-h-[600px] w-full border-0"
+                onLoad={handleFrameLoad}
+             className="block h-full w-full border-0"
               />
             )}
 
             {!loading && error && (
               <div className="flex min-h-[600px] flex-col items-center justify-center px-6 text-center">
-
                 <h2 className="text-2xl font-semibold text-slate-800">
                   Website not found
                 </h2>
-
                 <p className="mt-3 max-w-md text-sm text-slate-500">
                   {error}
                 </p>
-
                 <p className="mt-4 text-sm text-slate-400">
                   Check the address or try another .zz website.
                 </p>
-
               </div>
             )}
 
             {!loading && !site && !error && (
               <div className="flex min-h-[600px] flex-col items-center justify-center px-6 text-center">
-
                 <h2 className="text-3xl font-bold tracking-tight text-slate-800">
                   Welcome to TinyWeb
                 </h2>
-
                 <p className="mt-3 max-w-md text-sm leading-6 text-slate-500">
                   Explore a miniature web of interconnected websites.
                   Enter an address above to begin.
                 </p>
-
                 <button
                   type="button"
                   onClick={() => navigate('tidepool.zz')}
@@ -334,15 +482,12 @@ export default function Browser() {
                 >
                   Explore Tidepool
                 </button>
-
               </div>
             )}
 
           </div>
         </div>
-
       </section>
-
     </main>
   );
 }
