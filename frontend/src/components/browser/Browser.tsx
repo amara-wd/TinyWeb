@@ -8,9 +8,11 @@ import {
   getSiteByAddress,
   createVisit,
   getVisits,
+    searchSites,
+     publishSite,
 } from '@/lib/api';
 
-import type { Person, Site, Visit } from '@/types';
+import type { Person, Site, Visit, SearchResult } from '@/types';
 
 type NavigationMethod =
   | 'typed'
@@ -29,8 +31,27 @@ export default function Browser() {
   const [people, setPeople] = useState<Person[]>([]);
   const [selectedPerson, setSelectedPerson] = useState('');
 
+  const [activePanel, setActivePanel] = useState<
+  'history' | 'search' | 'publish'
+>('history');
+
+const [searchQuery, setSearchQuery] = useState('');
+const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+const [searchLoading, setSearchLoading] = useState(false);
+const [searchError, setSearchError] = useState('');
+
   const [address, setAddress] = useState('');
   const [site, setSite] = useState<Site | null>(null);
+
+
+  // Publishing form state.
+const [publishAddress, setPublishAddress] = useState('');
+const [publishTitle, setPublishTitle] = useState('');
+const [publishHtml, setPublishHtml] = useState('');
+
+const [publishLoading, setPublishLoading] = useState(false);
+const [publishError, setPublishError] = useState('');
+const [publishSuccess, setPublishSuccess] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -156,7 +177,100 @@ useEffect(() => {
   }
 
 
-  
+  // Search website content through the backend API.
+async function handleSearch(event: React.FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+
+  const query = searchQuery.trim();
+
+  if (!query) {
+    setSearchResults([]);
+    setSearchError('Enter a word or phrase to search.');
+    setActivePanel('search');
+    return;
+  }
+
+  setActivePanel('search');
+  setSearchLoading(true);
+  setSearchError('');
+
+  try {
+    const results = await searchSites(query);
+
+console.log('Search results:', results);
+
+setSearchResults(results);
+  } catch (err) {
+    setSearchResults([]);
+
+    setSearchError(
+      err instanceof Error
+        ? err.message
+        : 'Search could not be completed.',
+    );
+  } finally {
+    setSearchLoading(false);
+  }
+}
+
+// Publish a new website.
+async function handlePublish(event: React.FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+
+  const normalizedAddress = publishAddress.trim().toLowerCase();
+  const normalizedTitle = publishTitle.trim();
+  const html = publishHtml.trim();
+
+  setPublishError('');
+  setPublishSuccess('');
+
+  if (!selectedPerson) {
+    setPublishError('Please select an author first.');
+    return;
+  }
+
+  if (!/^[a-z0-9-]+\.zz$/.test(normalizedAddress)) {
+    setPublishError(
+      'Enter a valid address ending in .zz, such as mywebsite.zz.',
+    );
+    return;
+  }
+
+  if (!normalizedTitle || !html) {
+    setPublishError('Please provide a title and HTML content.');
+    return;
+  }
+
+  setPublishLoading(true);
+
+  try {
+    await publishSite({
+      address: normalizedAddress,
+      title: normalizedTitle,
+      html,
+      authorId: selectedPerson,
+    });
+
+    setPublishSuccess(
+      `${normalizedAddress} was published successfully.`,
+    );
+
+    setPublishAddress('');
+    setPublishTitle('');
+    setPublishHtml('');
+
+    // Open the newly published website.
+    await navigate(normalizedAddress, 'typed');
+  } catch (err) {
+    setPublishError(
+      err instanceof Error
+        ? err.message
+        : 'Could not publish the website.',
+    );
+  } finally {
+    setPublishLoading(false);
+  }
+}
   // Navigate to a website.
   async function navigate(
     targetAddress: string,
@@ -223,6 +337,8 @@ useEffect(() => {
 
     // Record the visit whether the website exists or not.
    try {
+    console.log('Address being recorded:', normalizedAddress);
+console.log('Navigation method:', method);
   await createVisit({
     personId: selectedPerson,
     address: normalizedAddress,
@@ -460,8 +576,50 @@ useEffect(() => {
   <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
 
     {/* Browsing history */}
-    <aside className="flex w-full shrink-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:w-80">
+ {/* History and Search sidebar */}
+<aside className="flex w-full shrink-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:w-80">
 
+  {/* Sidebar tabs */}
+  <div className="flex shrink-0 border-b border-slate-200">
+    <button
+      type="button"
+      onClick={() => setActivePanel('history')}
+      className={`flex-1 px-4 py-3 text-sm font-medium ${
+        activePanel === 'history'
+          ? 'border-b-2 border-blue-700 text-blue-700'
+          : 'text-slate-500 hover:bg-slate-50'
+      }`}
+    >
+      History
+    </button>
+
+    <button
+      type="button"
+      onClick={() => setActivePanel('search')}
+      className={`flex-1 px-4 py-3 text-sm font-medium ${
+        activePanel === 'search'
+          ? 'border-b-2 border-blue-700 text-blue-700'
+          : 'text-slate-500 hover:bg-slate-50'
+      }`}
+    >
+      Search
+    </button>
+    <button
+  type="button"
+  onClick={() => setActivePanel('publish')}
+  className={`flex-1 px-2 py-3 text-sm font-medium ${
+    activePanel === 'publish'
+      ? 'border-b-2 border-blue-700 text-blue-700'
+      : 'text-slate-500 hover:bg-slate-50'
+  }`}
+>
+  Publish
+</button>
+  </div>
+
+  {/* History panel */}
+  {activePanel === 'history' && (
+    <>
       <div className="shrink-0 border-b border-slate-200 px-4 py-3">
         <h2 className="font-semibold text-slate-800">
           Browsing History
@@ -536,7 +694,203 @@ useEffect(() => {
           </div>
         )}
       </div>
-    </aside>
+    </>
+  )}
+
+  {/* Search panel */}
+  {activePanel === 'search' && (
+    <>
+      <div className="shrink-0 border-b border-slate-200 p-4">
+        <h2 className="font-semibold text-slate-800">
+          Search the Web
+        </h2>
+
+        <p className="mt-1 text-xs text-slate-500">
+          Search words and phrases inside websites.
+        </p>
+
+        <form onSubmit={handleSearch} className="mt-3 flex gap-2">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search website content..."
+            className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          />
+
+          <button
+            type="submit"
+            disabled={searchLoading}
+            className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+          >
+            Search
+          </button>
+        </form>
+      </div>
+
+      <div className="min-h-0 max-h-64 flex-1 overflow-y-auto lg:max-h-none">
+
+        {searchLoading && (
+          <p className="p-4 text-sm text-slate-500">
+            Searching websites...
+          </p>
+        )}
+
+        {!searchLoading && searchError && (
+          <p className="p-4 text-sm text-red-600">
+            {searchError}
+          </p>
+        )}
+
+        {!searchLoading &&
+          !searchError &&
+          searchResults.length === 0 &&
+          searchQuery.trim() !== '' && (
+            <p className="p-4 text-sm text-slate-500">
+              No matching websites found.
+            </p>
+          )}
+
+        {!searchLoading && searchResults.length > 0 && (
+          <div className="divide-y divide-slate-100">
+
+            <p className="px-4 py-2 text-xs text-slate-500">
+              {searchResults.length} matching website(s)
+            </p>
+
+            {searchResults.map((result) => (
+              <button
+                key={result._id}
+                type="button"
+                onClick={() => navigate(result.address, 'search')}
+                disabled={loading}
+                className="w-full px-4 py-3 text-left transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <h3 className="text-sm font-semibold text-blue-700">
+                  {result.title}
+                </h3>
+
+                <p className="mt-1 break-all text-xs text-slate-500">
+                  {result.address}
+                </p>
+
+                <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600">
+                  {result.snippet}
+                </p>
+
+                {result.author && (
+                  <p className="mt-2 text-xs text-slate-400">
+                    Author: {result.author.name}
+                  </p>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  )}
+  {/* Publish panel */}
+{activePanel === 'publish' && (
+  <div className="min-h-0 flex-1 overflow-y-auto p-4">
+
+    <h2 className="font-semibold text-slate-800">
+      Publish a Website
+    </h2>
+
+    <p className="mt-1 text-xs leading-5 text-slate-500">
+      Create a new website in the TinyWeb network.
+      The selected person will be its author.
+    </p>
+
+    <form onSubmit={handlePublish} className="mt-4 space-y-4">
+
+      {/* Website address */}
+      <div>
+        <label className="mb-1 block text-sm font-medium text-slate-700">
+          Website Address
+        </label>
+
+        <input
+          type="text"
+          value={publishAddress}
+          onChange={(event) => setPublishAddress(event.target.value)}
+          placeholder="mywebsite.zz"
+          maxLength={100}
+          required
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        />
+
+        <p className="mt-1 text-xs text-slate-400">
+          Must end with .zz
+        </p>
+      </div>
+
+      {/* Website title */}
+      <div>
+        <label className="mb-1 block text-sm font-medium text-slate-700">
+          Website Title
+        </label>
+
+        <input
+          type="text"
+          value={publishTitle}
+          onChange={(event) => setPublishTitle(event.target.value)}
+          placeholder="My First Website"
+          maxLength={100}
+          required
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        />
+      </div>
+
+      {/* HTML editor */}
+      <div>
+        <label className="mb-1 block text-sm font-medium text-slate-700">
+          HTML Content
+        </label>
+
+        <textarea
+          value={publishHtml}
+          onChange={(event) => setPublishHtml(event.target.value)}
+          placeholder={'<!DOCTYPE html>\n<html>\n<head>\n  <title>My Website</title>\n</head>\n<body>\n  <h1>Hello TinyWeb!</h1>\n  <p>This is my first website.</p>\n</body>\n</html>'}
+          rows={12}
+          maxLength={100000}
+          required
+          className="w-full resize-y rounded-lg border border-slate-300 bg-slate-50 px-3 py-3 font-mono text-xs leading-5 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        />
+
+        <p className="mt-1 text-xs text-slate-400">
+          Maximum 100,000 characters.
+        </p>
+      </div>
+
+      {/* Errors */}
+      {publishError && (
+        <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          {publishError}
+        </p>
+      )}
+
+      {/* Success */}
+      {publishSuccess && (
+        <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">
+          {publishSuccess}
+        </p>
+      )}
+
+      {/* Submit */}
+      <button
+        type="submit"
+        disabled={publishLoading || !selectedPerson}
+        className="w-full rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {publishLoading ? 'Publishing...' : 'Publish Website'}
+      </button>
+
+    </form>
+  </div>
+)}
+</aside>
 
     {/* Website viewer */}
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">

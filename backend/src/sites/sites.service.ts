@@ -9,6 +9,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as cheerio from 'cheerio';
+import sanitizeHtml from 'sanitize-html';
 
 import { Site, SiteDocument } from './schemas/site.schema';
 import { Person, PersonDocument } from '../people/schemas/person.schema';
@@ -34,9 +35,7 @@ export class SitesService {
   }
 
   async findByAddress(address: string) {
-    const normalizedAddress = address
-      .trim()
-      .toLowerCase();
+    const normalizedAddress = address.trim().toLowerCase();
 
     const site = await this.siteModel
       .findOne({ address: normalizedAddress })
@@ -75,12 +74,37 @@ export class SitesService {
       throw new NotFoundException('Author not found');
     }
 
-    // Extract readable text from HTML.
-    const $ = cheerio.load(dto.html);
+    // Sanitize untrusted HTML before storing it.
+    const sanitizedHtml = sanitizeHtml(dto.html, {
+      allowedTags: sanitizeHtml.defaults.allowedTags.concat([
+        'img',
+        'h1',
+        'h2',
+        'h3',
+        'h4',
+        'section',
+        'article',
+        'main',
+        'header',
+        'footer',
+        'nav',
+      ]),
+      allowedAttributes: {
+        ...sanitizeHtml.defaults.allowedAttributes,
+        a: ['href', 'name', 'target'],
+        img: ['src', 'alt', 'width', 'height'],
+      },
+      allowedSchemes: ['http', 'https', 'mailto'],
+      allowProtocolRelative: false,
+    });
+
+    // Extract searchable text from the sanitized HTML.
+    const $ = cheerio.load(sanitizedHtml);
 
     $('script, style, noscript, template').remove();
 
-    const searchableText = $('body').text()
+    const searchableText = $('body')
+      .text()
       .replace(/\s+/g, ' ')
       .trim();
 
@@ -88,14 +112,13 @@ export class SitesService {
       const site = await this.siteModel.create({
         address,
         title: dto.title.trim(),
-        html: dto.html,
+        html: sanitizedHtml,
         searchableText,
         authorId: new Types.ObjectId(dto.authorId),
       });
 
       return site;
     } catch (error: any) {
-      // Also handle duplicate-address races.
       if (error.code === 11000) {
         throw new ConflictException(
           'This address is already registered',
