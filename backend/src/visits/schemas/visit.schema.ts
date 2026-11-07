@@ -34,25 +34,32 @@ export class Visit {
   })
   siteId!: Types.ObjectId | null;
 
-  @Prop({ required: true, lowercase: true, trim: true })
+  @Prop({
+    type: String,
+    required: true,
+    lowercase: true,
+    trim: true,
+  })
   address!: string;
 
-  @Prop()
+  @Prop({ type: String })
   title?: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: NavigationMethod,
   })
   method!: NavigationMethod;
 
   @Prop({
+    type: String,
     required: true,
     enum: VisitStatus,
   })
   status!: VisitStatus;
 
-  @Prop({ default: Date.now })
+  @Prop({ type: Date, default: Date.now })
   visitedAt!: Date;
 }
 
