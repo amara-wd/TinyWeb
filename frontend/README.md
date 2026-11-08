@@ -1,36 +1,112 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TinyWeb – Frontend
 
-## Getting Started
+The frontend application for **TinyWeb**, a small web browser built with Next.js, React, and TypeScript.
 
-First, run the development server:
+It provides a browser-like interface for navigating websites stored in MongoDB through the NestJS backend.
+
+## Technology Stack
+
+- **Framework:** Next.js
+- **Library:** React
+- **Language:** TypeScript
+- **Styling:** Tailwind CSS
+- **API Communication:** Fetch API
+
+## Features
+
+- Browser-style address bar for navigating custom `.zz` addresses.
+- Navigate between websites using internal links.
+- Back and Forward navigation.
+- Restore scroll positions when revisiting pages.
+- Person selection for separate browsing histories.
+- Scrollable browsing history with jump-to-visit functionality.
+- Search websites by their content.
+- Preserve search results while navigating.
+- Publish custom HTML pages.
+- Display unavailable pages for nonexistent addresses.
+- Render published HTML inside a sandboxed iframe.
+
+## Project Setup
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Configure environment variables
+
+Create a `.env.local` file in the frontend root directory:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:3001/api
+```
+
+This variable specifies the URL of the NestJS backend API.
+
+## Running the Application
+
+Start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open the application:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+`http://localhost:3000`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Keep the backend running separately at `http://localhost:3001`.
 
-## Learn More
+## Available Scripts
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+# Development server
+npm run dev
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+# Production build
+npm run build
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+# Run production server
+npm run start
 
-## Deploy on Vercel
+# Lint the project
+npm run lint
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Application Structure
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```text
+src/
+├── app/
+├── components/
+│   └── browser/
+│       └── Browser.tsx
+├── lib/
+│   └── api.ts
+└── types/
+    └── index.ts
+```
+
+## Backend Integration
+
+The frontend communicates with the NestJS REST API to:
+
+- Retrieve browsing people and websites.
+- Load website content by address.
+- Record browsing visits.
+- Retrieve individual browsing histories.
+- Search website content.
+- Publish new websites.
+
+## Running the Complete Application
+
+1. Start the NestJS backend.
+2. Start the Next.js frontend in a separate terminal.
+3. Open `http://localhost:3000` in your browser.
+
+Refer to the root project README for complete setup and database seeding instructions.
+
+## License
+
+This project was developed as a technical assessment for the Full Stack Developer position at Wyxan.
